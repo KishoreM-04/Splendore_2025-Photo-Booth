@@ -80,8 +80,8 @@ public class CountdownActivity extends AppCompatActivity {
     private void scheduleDailyNotification() {
 
         Calendar calendar = Calendar.getInstance();
-        calendar.set(Calendar.HOUR_OF_DAY, 00);
-        calendar.set(Calendar.MINUTE, 03);
+        calendar.set(Calendar.HOUR_OF_DAY, 8);
+        calendar.set(Calendar.MINUTE, 30);
         calendar.set(Calendar.SECOND, 0);
 
         // If it's already past 8:30 today, schedule for tomorrow
