@@ -4,278 +4,227 @@ import android.Manifest;
 import android.content.ContentValues;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.Matrix;
-import android.graphics.Paint;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.util.DisplayMetrics;
+import android.util.Size;
+import android.view.ViewGroup;
 import android.widget.Toast;
+
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageCapture;
-import androidx.camera.core.ImageCaptureException;
 import androidx.camera.core.ImageProxy;
 import androidx.camera.core.Preview;
 import androidx.camera.lifecycle.ProcessCameraProvider;
 import androidx.camera.view.PreviewView;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
+
 import com.google.android.material.button.MaterialButton;
 import com.google.android.material.floatingactionbutton.FloatingActionButton;
 import com.google.common.util.concurrent.ListenableFuture;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
+
 import java.io.OutputStream;
 import java.nio.ByteBuffer;
-import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.Locale;
-import java.util.concurrent.ExecutionException;
 
 public class camPage extends AppCompatActivity {
 
-    private static final int REQUEST_PERMISSION = 101;
     private PreviewView previewView;
     private FrameOverlayView overlayView;
     private FloatingActionButton btnCapture;
     private MaterialButton btnSwitchCamera;
+
     private ImageCapture imageCapture;
-    private CameraSelector cameraSelector;
-    private boolean isFrontCamera = false;
+    private CameraSelector cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA;
+    private boolean isFront = false;
+
+    // Dynamic values (screen-based)
+    private int windowSize, windowLeft, windowTop;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_cam_page);
 
-        initViews();
-        checkPermissionsAndStartCamera();
-    }
-
-    private void initViews() {
         previewView = findViewById(R.id.previewView);
         overlayView = findViewById(R.id.overlayView);
         btnCapture = findViewById(R.id.btnCapture);
         btnSwitchCamera = findViewById(R.id.btnSwitchCamera);
 
+        // calculate layout based on device resolution
+        overlayView.post(() -> setupDynamicWindow());
+
         btnCapture.setOnClickListener(v -> capturePhoto());
         btnSwitchCamera.setOnClickListener(v -> switchCamera());
     }
 
-    private void checkPermissionsAndStartCamera() {
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
-                == PackageManager.PERMISSION_GRANTED) {
-            startCamera();
-        } else {
+    private void setupDynamicWindow() {
+
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        int screenW = dm.widthPixels;
+        int screenH = dm.heightPixels;
+
+        // 1. Square = 81% of screen width
+        windowSize = (int) (screenW * 0.81f);
+
+        // 2. Center horizontally
+        windowLeft = (screenW - windowSize) / 2;
+
+        // 3. Polaroid vertical position = 21% of screen height
+        windowTop = (int) (screenH * 0.21f);
+
+        // update overlay
+        overlayView.updateWindow(windowLeft, windowTop, windowSize);
+
+        // size preview for universal perfect alignment
+        ViewGroup.LayoutParams params = previewView.getLayoutParams();
+        params.height = (int) (screenH * 0.70f);
+        previewView.setLayoutParams(params);
+
+        setupCamera();
+    }
+
+    private void setupCamera() {
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                != PackageManager.PERMISSION_GRANTED) {
+
             ActivityCompat.requestPermissions(this,
-                    new String[]{Manifest.permission.CAMERA,
-                            Manifest.permission.WRITE_EXTERNAL_STORAGE},
-                    REQUEST_PERMISSION);
+                    new String[]{Manifest.permission.CAMERA}, 300);
+            return;
         }
+
+        startCamera();
     }
 
     private void startCamera() {
-        ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
+        ListenableFuture<ProcessCameraProvider> future =
                 ProcessCameraProvider.getInstance(this);
 
-        cameraProviderFuture.addListener(() -> {
+        future.addListener(() -> {
             try {
-                ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
-                bindCameraUseCases(cameraProvider);
-            } catch (ExecutionException | InterruptedException e) {
-                Toast.makeText(this, "Error starting camera", Toast.LENGTH_SHORT).show();
-            }
+                ProcessCameraProvider provider = future.get();
+                bindUseCases(provider);
+            } catch (Exception ignored) {}
         }, ContextCompat.getMainExecutor(this));
     }
 
-    private void bindCameraUseCases(ProcessCameraProvider cameraProvider) {
-        Preview preview = new Preview.Builder().build();
+    private void bindUseCases(ProcessCameraProvider provider) {
+
+        Preview preview = new Preview.Builder()
+                .setTargetResolution(new Size(windowSize, windowSize))
+                .build();
+
         preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
         imageCapture = new ImageCapture.Builder()
+                .setTargetResolution(new Size(windowSize, windowSize))
                 .setCaptureMode(ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY)
                 .build();
 
-        cameraSelector = isFrontCamera ?
-                CameraSelector.DEFAULT_FRONT_CAMERA :
-                CameraSelector.DEFAULT_BACK_CAMERA;
-
-        try {
-            cameraProvider.unbindAll();
-            cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageCapture);
-        } catch (Exception e) {
-            Toast.makeText(this, "Camera binding failed", Toast.LENGTH_SHORT).show();
-        }
+        provider.unbindAll();
+        provider.bindToLifecycle(this, cameraSelector, preview, imageCapture);
     }
 
     private void switchCamera() {
-        isFrontCamera = !isFrontCamera;
+        isFront = !isFront;
+        cameraSelector = isFront ?
+                CameraSelector.DEFAULT_FRONT_CAMERA :
+                CameraSelector.DEFAULT_BACK_CAMERA;
         startCamera();
     }
 
     private void capturePhoto() {
-        if (imageCapture == null) return;
-
-        btnCapture.setEnabled(false);
-
         imageCapture.takePicture(ContextCompat.getMainExecutor(this),
                 new ImageCapture.OnImageCapturedCallback() {
                     @Override
                     public void onCaptureSuccess(@NonNull ImageProxy image) {
-                        Bitmap photoBitmap = imageProxyToBitmap(image);
+
+                        Bitmap bmp = imageToBitmap(image);
                         image.close();
 
-                        if (photoBitmap != null) {
-                            Bitmap framedBitmap = createFramedImage(photoBitmap);
-                            saveImage(framedBitmap);
-                        }
+                        Bitmap finalImage = createFinalImage(bmp);
+                        saveImage(finalImage);
 
-                        btnCapture.setEnabled(true);
-                    }
-
-                    @Override
-                    public void onError(@NonNull ImageCaptureException exception) {
-                        Toast.makeText(camPage.this,
-                                "Capture failed: " + exception.getMessage(),
-                                Toast.LENGTH_SHORT).show();
-                        btnCapture.setEnabled(true);
+                        Toast.makeText(camPage.this, "Saved!", Toast.LENGTH_SHORT).show();
                     }
                 });
     }
 
-    private Bitmap imageProxyToBitmap(ImageProxy image) {
-        ImageProxy.PlaneProxy[] planes = image.getPlanes();
-        ByteBuffer buffer = planes[0].getBuffer();
+    private Bitmap imageToBitmap(ImageProxy image) {
+        ByteBuffer buffer = image.getPlanes()[0].getBuffer();
         byte[] bytes = new byte[buffer.remaining()];
         buffer.get(bytes);
 
-        Bitmap bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+        Bitmap bmp = BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
 
-        // Rotate if needed
-        Matrix matrix = new Matrix();
-        matrix.postRotate(image.getImageInfo().getRotationDegrees());
+        Matrix m = new Matrix();
+        m.postRotate(image.getImageInfo().getRotationDegrees());
+        if (isFront) m.postScale(-1, 1);
 
-        if (isFrontCamera) {
-            matrix.postScale(-1, 1, bitmap.getWidth() / 2f, bitmap.getHeight() / 2f);
-        }
-
-        return Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(),
-                bitmap.getHeight(), matrix, true);
+        return Bitmap.createBitmap(bmp, 0, 0, bmp.getWidth(), bmp.getHeight(), m, true);
     }
 
-    private Bitmap createFramedImage(Bitmap photo) {
-        int width = 1080;
-        int height = 1920;
+    private Bitmap createFinalImage(Bitmap photo) {
 
-        // Circle position - must match FrameOverlayView
-        int centerX = width / 2;
-        int centerY = height / 2 - 100;
-        int radius = (int) (Math.min(width, height) / 2.6);
+        // Final output resolution
+        int outW = 1080;
+        int outH = 1920;
 
-        // Step 1: Scale camera bitmap so that it covers the whole screen
-        Bitmap scaledPhoto = scaleCenterCrop(photo, width, height);
-
-        // Step 2: Crop the EXACT circle area
-        Bitmap circleCrop = Bitmap.createBitmap(radius * 2, radius * 2, Bitmap.Config.ARGB_8888);
-        Canvas cropCanvas = new Canvas(circleCrop);
-
-        // Create circular mask
-        Paint mask = new Paint(Paint.ANTI_ALIAS_FLAG);
-        mask.setColor(Color.BLACK);
-        cropCanvas.drawCircle(radius, radius, radius, mask);
-
-        // Apply SRC_IN mode (keeps only inside circle)
-        mask.setXfermode(new android.graphics.PorterDuffXfermode(android.graphics.PorterDuff.Mode.SRC_IN));
-        cropCanvas.drawBitmap(
-                scaledPhoto,
-                -(centerX - radius),
-                -(centerY - radius),
-                mask
-        );
-
-        // Step 3: Draw final result with background frame
-        Bitmap result = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+        Bitmap result = Bitmap.createBitmap(outW, outH, Bitmap.Config.ARGB_8888);
         Canvas canvas = new Canvas(result);
 
-        canvas.drawRGB(255, 255, 255);
+        // Get screen resolution used earlier
+        DisplayMetrics dm = getResources().getDisplayMetrics();
+        int screenW = dm.widthPixels;
+        int screenH = dm.heightPixels;
 
-        // Draw circular cropped bitmap in place
-        canvas.drawBitmap(circleCrop, centerX - radius, centerY - radius, null);
+        // --- SCALE FACTORS ---
+        float scaleX = (float) outW / screenW;
+        float scaleY = (float) outH / screenH;
 
-        // Draw your frame (border, background)
-        overlayView.drawFrameOnCanvas(canvas, width, height, circleCrop);
+        // --- CONVERT WINDOW POSITIONS ---
+        int finalLeft = (int) (windowLeft * scaleX);
+        int finalTop  = (int) (windowTop * scaleY);
+        int finalSize = (int) (windowSize * scaleX); // ONLY X because it must stay square
+
+        // Draw the polaroid background
+        Bitmap bg = BitmapFactory.decodeResource(getResources(), R.drawable.frame_bg);
+        Bitmap scaledBg = Bitmap.createScaledBitmap(bg, outW, outH, true);
+        canvas.drawBitmap(scaledBg, 0, 0, null);
+
+        // Scale user's captured photo into the square
+        Bitmap scaledPhoto = Bitmap.createScaledBitmap(photo, finalSize, finalSize, true);
+
+        // Draw it inside the square
+        canvas.drawBitmap(scaledPhoto, finalLeft, finalTop, null);
 
         return result;
     }
 
-
-    private Bitmap scaleCenterCrop(Bitmap source, int targetWidth, int targetHeight) {
-        int sourceWidth = source.getWidth();
-        int sourceHeight = source.getHeight();
-
-        float xScale = (float) targetWidth / sourceWidth;
-        float yScale = (float) targetHeight / sourceHeight;
-        float scale = Math.max(xScale, yScale);
-
-        Matrix matrix = new Matrix();
-        matrix.postScale(scale, scale);
-
-        int scaledWidth = Math.round(sourceWidth * scale);
-        int scaledHeight = Math.round(sourceHeight * scale);
-
-        int left = (scaledWidth - targetWidth) / 2;
-        int top = (scaledHeight - targetHeight) / 2;
-
-        Bitmap scaled = Bitmap.createBitmap(source, 0, 0, sourceWidth, sourceHeight, matrix, true);
-        return Bitmap.createBitmap(scaled, left, top, targetWidth, targetHeight);
-    }
-
     private void saveImage(Bitmap bitmap) {
-        String filename = "FramedPhoto_" +
-                new SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(new Date()) + ".jpg";
+        try {
+            String filename = "Splendore_" + System.currentTimeMillis() + ".jpg";
 
-        ContentValues values = new ContentValues();
-        values.put(MediaStore.Images.Media.DISPLAY_NAME, filename);
-        values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
-        values.put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/PhotoFrame");
-        values.put(MediaStore.Images.Media.IS_PENDING, 1);
+            ContentValues values = new ContentValues();
+            values.put(MediaStore.Images.Media.DISPLAY_NAME, filename);
+            values.put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg");
+            values.put(MediaStore.Images.Media.RELATIVE_PATH,
+                    Environment.DIRECTORY_PICTURES + "/SplendoreFrame");
 
-        Uri uri = getContentResolver().insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
+            Uri uri = getContentResolver()
+                    .insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values);
 
-        if (uri != null) {
-            try {
-                OutputStream outputStream = getContentResolver().openOutputStream(uri);
-                bitmap.compress(Bitmap.CompressFormat.JPEG, 95, outputStream);
-                outputStream.close();
+            OutputStream out = getContentResolver().openOutputStream(uri);
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 96, out);
+            out.close();
 
-                // Make image visible in gallery
-                values.put(MediaStore.Images.Media.IS_PENDING, 0);
-                getContentResolver().update(uri, values, null, null);
-
-                Toast.makeText(this, "Saved to Gallery!", Toast.LENGTH_SHORT).show();
-            } catch (IOException e) {
-                Toast.makeText(this, "Save failed: " + e.getMessage(), Toast.LENGTH_SHORT).show();
-            }
-        }
-    }
-
-    @Override
-    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
-                                           @NonNull int[] grantResults) {
-        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
-
-        if (requestCode == REQUEST_PERMISSION) {
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                startCamera();
-            } else {
-                Toast.makeText(this, "Camera permission required", Toast.LENGTH_SHORT).show();
-                finish();
-            }
-        }
+        } catch (Exception ignored) {}
     }
 }

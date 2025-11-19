@@ -4,132 +4,92 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
-import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Path;
 import android.graphics.PorterDuff;
 import android.graphics.PorterDuffXfermode;
+import android.graphics.RectF;
 import android.util.AttributeSet;
 import android.view.View;
 
 public class FrameOverlayView extends View {
 
-    private Paint overlayPaint;
-    private Paint clearCirclePaint;
-    private Paint borderPaint;
     private Bitmap bgImage;
+    private Paint overlayPaint, clearPaint;
 
-    public FrameOverlayView(Context context, AttributeSet attrs) {
-        super(context, attrs);
+    // Dynamic values from camPage
+    public int windowSize = 0;
+    public int windowLeft = 0;
+    public int windowTop = 0;
+
+    private float cornerRadius = 40f;
+
+    public FrameOverlayView(Context ctx, AttributeSet attrs) {
+        super(ctx, attrs);
         init();
     }
 
     private void init() {
-
-        // Background image from drawable
         bgImage = BitmapFactory.decodeResource(getResources(), R.drawable.frame_bg);
 
-
-        // Dim overlay
         overlayPaint = new Paint();
-        overlayPaint.setColor(Color.argb(160, 0, 0, 0));
-        overlayPaint.setStyle(Paint.Style.FILL);
+        overlayPaint.setColor(0xA0000000);
 
-        // Clear-circle paint
-        clearCirclePaint = new Paint();
-        clearCirclePaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
-        clearCirclePaint.setAntiAlias(true);
-
-        // Circle border paint (reduced thickness)
-        borderPaint = new Paint();
-        borderPaint.setColor(Color.WHITE);
-        borderPaint.setStyle(Paint.Style.STROKE);
-        borderPaint.setStrokeWidth(5);   // Reduced from 8
-        borderPaint.setAntiAlias(true);
+        clearPaint = new Paint();
+        clearPaint.setAntiAlias(true);
+        clearPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
 
         setLayerType(LAYER_TYPE_SOFTWARE, null);
+    }
+
+    public void updateWindow(int left, int top, int size) {
+        this.windowLeft = left;
+        this.windowTop = top;
+        this.windowSize = size;
+        invalidate();
     }
 
     @Override
     protected void onDraw(Canvas canvas) {
         super.onDraw(canvas);
 
-        int width = getWidth();
-        int height = getHeight();
+        int W = getWidth();
+        int H = getHeight();
 
-        // Draw background image stretched to view size
-        if (bgImage != null) {
-            Bitmap scaled = Bitmap.createScaledBitmap(bgImage, width, height, true);
-            canvas.drawBitmap(scaled, 0, 0, null);
-        }
+        Bitmap scaled = Bitmap.createScaledBitmap(bgImage, W, H, true);
+        canvas.drawBitmap(scaled, 0, 0, null);
 
-        // Draw dim overlay
-        canvas.drawRect(0, 0, width, height, overlayPaint);
+        canvas.drawRect(0, 0, W, H, overlayPaint);
 
-        int centerX = width / 2;
-        int centerY = height / 2 - 100;
-        int radius = (int) (Math.min(width, height) / 2.6);
+        RectF rect = new RectF(windowLeft, windowTop, windowLeft + windowSize, windowTop + windowSize);
 
-        // Create transparent circular area
-        canvas.drawCircle(centerX, centerY, radius, clearCirclePaint);
+        Path p = new Path();
+        p.addRoundRect(rect, cornerRadius, cornerRadius, Path.Direction.CCW);
 
-        // Draw white circle border
-        canvas.drawCircle(centerX, centerY, radius, borderPaint);
+        canvas.drawPath(p, clearPaint);
     }
 
-    public void drawFrameOnCanvas(Canvas canvas, int width, int height, Bitmap userPhoto) {
+    public void drawFrameOnCanvas(Canvas canvas, Bitmap userPhoto, int finalLeft, int finalTop, int finalSize) {
 
-        // Draw background
-        if (bgImage != null) {
-            Bitmap scaledBg = Bitmap.createScaledBitmap(bgImage, width, height, true);
-            canvas.drawBitmap(scaledBg, 0, 0, null);
-        }
+        int W = canvas.getWidth();
+        int H = canvas.getHeight();
 
-        int centerX = width / 2;
-        int centerY = height / 2 + 30;
-        int radius = (int)(Math.min(width, height) / 2.6f);
+        Bitmap scaled = Bitmap.createScaledBitmap(bgImage, W, H, true);
+        canvas.drawBitmap(scaled, 0, 0, null);
 
-        // --- CUT HOLE ---
-        Paint clearPaint = new Paint();
-        clearPaint.setAntiAlias(true);
-        clearPaint.setXfermode(new PorterDuffXfermode(PorterDuff.Mode.CLEAR));
-        canvas.drawCircle(centerX, centerY, radius, clearPaint);
+        RectF rect = new RectF(finalLeft, finalTop, finalLeft + finalSize, finalTop + finalSize);
 
-        // --- DRAW USER PHOTO AS PERFECT CIRCLE ---
-        if (userPhoto != null) {
+        Bitmap cropped = Bitmap.createScaledBitmap(userPhoto,
+                finalSize, finalSize, true);
 
-            Bitmap scaled = Bitmap.createScaledBitmap(
-                    userPhoto,
-                    radius * 2,
-                    radius * 2,
-                    true
-            );
+        int save = canvas.save();
 
-            int save = canvas.save();
+        Path clip = new Path();
+        clip.addRoundRect(rect, cornerRadius, cornerRadius, Path.Direction.CCW);
+        canvas.clipPath(clip);
 
-            Path clipPath = new Path();
-            clipPath.addCircle(centerX, centerY, radius, Path.Direction.CCW);
-            canvas.clipPath(clipPath);
+        canvas.drawBitmap(cropped, rect.left, rect.top, null);
 
-            canvas.drawBitmap(
-                    scaled,
-                    centerX - radius,
-                    centerY - radius,
-                    null
-            );
-
-            canvas.restoreToCount(save);
-        }
-
-        // --- DRAW BORDER ---
-        Paint border = new Paint();
-        border.setColor(Color.WHITE);
-        border.setStyle(Paint.Style.STROKE);
-        border.setStrokeWidth(5);
-        border.setAntiAlias(true);
-
-        canvas.drawCircle(centerX, centerY, radius, border);
+        canvas.restoreToCount(save);
     }
-
-
 }
